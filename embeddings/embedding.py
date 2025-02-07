@@ -1,51 +1,38 @@
-import os
-import faiss
 import pickle
+import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from config import DATA_DIR, PICKLE_FILE, INDEX_FILE, EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP, NUM_WORKERS
-from utils.logger import log_event
-from multiprocessing import Pool
+from config import EMBEDDING_MODEL
 
-# Initialize the embedding model
 model = SentenceTransformer(EMBEDDING_MODEL)
 
-def load_text(file_path):
-    """Load text file."""
-    with open(file_path, "r", encoding="utf-8") as f:
-        return f.read()
+def create_faiss_index():
+    """Loads finance knowledge base, creates embeddings, and saves FAISS index."""
+    knowledge_files = [
+        "knowledge_base/01_market_analysis.txt",
+        "knowledge_base/02_algorithmic_trading.txt",
+        "knowledge_base/03_quant_finance.txt",
+        "knowledge_base/04_macro_economics.txt",
+        "knowledge_base/05_risk_management.txt"
+    ]
 
-def split_text(text):
-    """Split text into overlapping chunks."""
-    splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
-    return splitter.split_text(text)
+    chunks = []
+    for file in knowledge_files:
+        with open(file, "r", encoding="utf-8") as f:
+            text = f.read()
+            chunks.extend(text.split("\n\n"))  # Split into chunks
+    
+    embeddings = np.array([model.encode(chunk) for chunk in chunks])
 
-def process_file(file):
-    """Process individual file for parallel embedding."""
-    text = load_text(os.path.join(DATA_DIR, file))
-    return split_text(text)
-
-def create_embeddings():
-    """Generate and save embeddings for the knowledge base using multiprocessing."""
-    log_event("Creating embeddings...")
-    all_chunks = []
-    files = [f for f in os.listdir(DATA_DIR) if f.endswith(".txt")]
-    
-    with Pool(NUM_WORKERS) as pool:
-        results = pool.map(process_file, files)
-        for chunks in results:
-            all_chunks.extend(chunks)
-    
-    embeddings = model.encode(all_chunks, convert_to_numpy=True)
-    
-    # Store FAISS index
-    index = faiss.IndexFlatL2(embeddings.shape[1])
+    index = faiss.IndexFlatL2(embeddings.shape[1])  # L2 Distance (Euclidean)
     index.add(embeddings)
-    faiss.write_index(index, INDEX_FILE)
-    
-    with open(PICKLE_FILE, "wb") as f:
-        pickle.dump((all_chunks, embeddings), f)
-    
-    log_event("Embeddings created successfully!")
-    return all_chunks, index
+
+    with open("embeddings/finance_embeddings.pkl", "wb") as f:
+        pickle.dump((chunks, index), f)
+
+    print("✅ FAISS Index Created & Saved")
+
+def load_embeddings():
+    """Loads FAISS index for retrieval."""
+    with open("embeddings/finance_embeddings.pkl", "rb") as f:
+        return pickle.load(f)
