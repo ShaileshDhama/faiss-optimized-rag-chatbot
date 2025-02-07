@@ -1,38 +1,41 @@
+import os
 import pickle
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from config import EMBEDDING_MODEL
+from config import FAISS_INDEX_PATH, FAISS_METADATA_PATH, EMBEDDING_MODEL
+from logger import log_event
 
-model = SentenceTransformer(EMBEDDING_MODEL)
+class EmbeddingHandler:
+    def __init__(self):
+        """Initialize embedding model and FAISS index."""
+        self.model = SentenceTransformer(EMBEDDING_MODEL)
+        self.index = faiss.IndexFlatL2(self.model.get_sentence_embedding_dimension())
+        self.metadata = []
 
-def create_faiss_index():
-    """Loads finance knowledge base, creates embeddings, and saves FAISS index."""
-    knowledge_files = [
-        "knowledge_base/01_market_analysis.txt",
-        "knowledge_base/02_algorithmic_trading.txt",
-        "knowledge_base/03_quant_finance.txt",
-        "knowledge_base/04_macro_economics.txt",
-        "knowledge_base/05_risk_management.txt"
-    ]
+        # Load existing FAISS index if available
+        if os.path.exists(FAISS_INDEX_PATH):
+            self.index = faiss.read_index(FAISS_INDEX_PATH)
+            with open(FAISS_METADATA_PATH, "rb") as f:
+                self.metadata = pickle.load(f)
+            log_event("FAISS index loaded successfully.")
 
-    chunks = []
-    for file in knowledge_files:
-        with open(file, "r", encoding="utf-8") as f:
-            text = f.read()
-            chunks.extend(text.split("\n\n"))  # Split into chunks
-    
-    embeddings = np.array([model.encode(chunk) for chunk in chunks])
+    def encode_text(self, text):
+        """Convert text to embeddings."""
+        return self.model.encode(text)
 
-    index = faiss.IndexFlatL2(embeddings.shape[1])  # L2 Distance (Euclidean)
-    index.add(embeddings)
+    def add_to_index(self, text_chunks):
+        """Add new text chunks to FAISS index."""
+        embeddings = [self.encode_text(chunk) for chunk in text_chunks]
+        self.index.add(np.array(embeddings, dtype=np.float32))
+        self.metadata.extend(text_chunks)
 
-    with open("embeddings/finance_embeddings.pkl", "wb") as f:
-        pickle.dump((chunks, index), f)
+        # Save updated index and metadata
+        faiss.write_index(self.index, FAISS_INDEX_PATH)
+        with open(FAISS_METADATA_PATH, "wb") as f:
+            pickle.dump(self.metadata, f)
+        log_event("New embeddings added to FAISS.")
 
-    print("✅ FAISS Index Created & Saved")
-
-def load_embeddings():
-    """Loads FAISS index for retrieval."""
-    with open("embeddings/finance_embeddings.pkl", "rb") as f:
-        return pickle.load(f)
+if __name__ == "__main__":
+    embedder = EmbeddingHandler()
+    embedder.add_to_index(["Sample financial data"])
